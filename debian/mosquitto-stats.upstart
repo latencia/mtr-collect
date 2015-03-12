@@ -1,0 +1,9 @@
+description "mosquitto-stats daemon"
+start on (local-filesystems and net-device-up IFACE!=lo)
+
+stop on runlevel [06]
+
+respawn
+respawn limit 10 10
+
+exec mosquitto-stats

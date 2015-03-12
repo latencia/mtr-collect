@@ -1,0 +1,16 @@
+Source: mtr-collect
+Section: net
+Priority: extra
+Maintainer: Sergio Rubio <rubiojr@frameos.org>
+Build-Depends: debhelper (>= 8.0.0),
+               golang-go
+Standards-Version: 3.9.2
+#Vcs-Git: git://github.com/rubiojr/go-daemon-debian-pkg-skel.git
+#Vcs-Browser: http://github.com/rubiojr/go-daemon-debian-pkg-skel
+
+Package: mtr-collect
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Built-Using: ${misc:Built-Using}
+Description: Collect mtr reports
+ Connect to an MQTT broker and collect mtr reports.
