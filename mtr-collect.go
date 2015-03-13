@@ -1,23 +1,24 @@
 package main
 
 import (
-  "strconv"
-  "fmt"
-  "encoding/json"
 	"./mqttc"
+	"encoding/json"
+	"fmt"
 	"git.eclipse.org/gitroot/paho/org.eclipse.paho.mqtt.golang.git"
 	log "github.com/Sirupsen/logrus"
 	"github.com/marpaia/graphite-golang"
 	"gopkg.in/alecthomas/kingpin.v1"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
 
 var (
-	Graphite   *graphite.Graphite
-	NOOP = false
+	Graphite *graphite.Graphite
+	NOOP     = false
+	VERBOSE  = true
 )
 
 type Host struct {
@@ -58,14 +59,14 @@ func sendMetrics(client *mqtt.MqttClient, msg mqtt.Message) {
 		log.Error("Error decoding json report")
 	}
 
-  ip := report.Location.IP
+	ip := report.Location.IP
 	if ip == "" {
 		log.Warnf("Discarding report with no source IP")
 		return
 	}
 	ip = strings.Replace(ip, ".", "_", -1)
 
-  cc := report.Location.CountryCode
+	cc := report.Location.CountryCode
 	if cc == "" {
 		log.Warnf("Discarding report with no country code")
 		return
@@ -76,7 +77,15 @@ func sendMetrics(client *mqtt.MqttClient, msg mqtt.Message) {
 	if city == "" {
 		city = "nil"
 	}
-	last_hop := report.Hosts[len(report.Hosts) - 1]
+
+	pktLossHops := 0
+	for _, host := range report.Hosts {
+		if host.LostPercent != 0 && host.LostPercent != 100 {
+			pktLossHops += 1
+		}
+	}
+
+	last_hop := report.Hosts[len(report.Hosts)-1]
 
 	metric_prefix := strings.ToLower(fmt.Sprintf("push-mtr.%s.%s.%s", ip, cc, city))
 	mHops := metric_prefix + ".hops"
@@ -84,6 +93,7 @@ func sendMetrics(client *mqtt.MqttClient, msg mqtt.Message) {
 	mLastHopBest := metric_prefix + ".last_hop.best"
 	mLastHopWorst := metric_prefix + ".last_hop.worst"
 
+	sendMetric(metric_prefix+".pkt_loss_hops", strconv.Itoa(pktLossHops))
 	sendMetric(mHops, strconv.Itoa(hops))
 	sendMetric(mLastHopAvg, strconv.FormatFloat(last_hop.Avg, 'f', 3, 64))
 	sendMetric(mLastHopBest, strconv.FormatFloat(last_hop.Best, 'f', 3, 64))
@@ -125,6 +135,8 @@ func main() {
 	graphiteHost := kingpin.Flag("graphiteHost", "Graphite host").
 		Default("localhost").String()
 
+	clientID := kingpin.Flag("clientid", "Use a custom MQTT client ID").String()
+
 	graphitePort := kingpin.Flag("graphitePort", "Graphite port").
 		Default("2003").Int()
 
@@ -137,6 +149,9 @@ func main() {
 	debug := kingpin.Flag("debug", "Print debugging messages").
 		Default("false").Bool()
 
+	VERBOSE = *(kingpin.Flag("verbose", "Print metrics being sent").
+		Default("false").Bool())
+
 	noop := kingpin.Flag("noop", "Print the metrics being sent instead of sending them").
 		Default("false").Bool()
 
@@ -147,6 +162,7 @@ func main() {
 	}
 
 	NOOP = *noop
+	var err error
 
 	if *cafile != "" {
 		if _, err := os.Stat(*cafile); err != nil {
@@ -167,16 +183,25 @@ func main() {
 		log.Debugf("Loaded Graphite connection: %#v", Graphite)
 	}
 
+	if *clientID == "" {
+		*clientID, err = os.Hostname()
+		if err != nil {
+			log.Fatal("Can't get the hostname to use it as the ClientID, use --clientid option")
+		}
+	}
+	log.Debugf("MQTT Client ID: %s", *clientID)
+
 	for _, urlStr := range urlList {
 		args := mqttc.Args{
 			BrokerURLs:    []string{urlStr},
-			ClientID:      "mtr-collect",
+			ClientID:      *clientID,
 			Topic:         *topic,
 			TLSCACertPath: *cafile,
 			TLSSkipVerify: *insecure,
 		}
 
 		uri, _ := url.Parse(urlStr)
+		log.Debug("Starting mqttc client")
 		c := mqttc.Subscribe(sendMetrics, &args)
 		defer c.Disconnect(0)
 		host := strings.Split(uri.Host, ":")[0]
